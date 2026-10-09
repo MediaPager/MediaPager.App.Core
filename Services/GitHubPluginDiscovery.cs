@@ -25,7 +25,7 @@ namespace MediaPager.App.Core.Services;
 public sealed class GitHubPluginDiscovery
 {
     private const string Prefix = "MediaPager.Plugins.";
-    private const string OfficialOwner = "nobugsgiven";
+    private const string OfficialOwner = "MediaPager";
     private const int BrowseLimit = 10;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
 

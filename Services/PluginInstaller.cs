@@ -63,14 +63,12 @@ public sealed class PluginInstaller(
             Loaded: newPlugins.Select(plugin => plugin.Descriptor.Id).ToList());
     }
 
-    // "dev.nobugsgiven.apps.MediaPager.Plugins.Email.Gmail" → "MediaPager.Plugins.Email.Gmail"
-    // for list entries that don't name an assembly explicitly.
+    // Derive the assembly/project name from the final repository path segment when a list
+    // entry does not specify an assembly explicitly.
     public static string DeriveAssemblyName(string repo)
     {
         var name = new Uri(repo).AbsolutePath.TrimEnd('/').Split('/').Last();
         if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
-        return name.StartsWith("dev.nobugsgiven.apps.", StringComparison.OrdinalIgnoreCase)
-            ? name["dev.nobugsgiven.apps.".Length..]
-            : name;
+        return name;
     }
 }

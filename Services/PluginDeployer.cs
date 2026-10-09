@@ -24,7 +24,7 @@ public sealed class PluginDeployer
     // path (../MediaPager.App.PluginContracts), so a bare plugin checkout can't publish
     // alone: when a csproj asks for that sibling, stage a clone next to it.
     private const string PluginContractsRepo =
-        "https://github.com/nobugsgiven/dev.nobugsgiven.apps.MediaPager.App.PluginContracts.git";
+        "https://github.com/MediaPager/MediaPager.App.PluginContracts.git";
 
     /// <summary>Clone the repo, publish the plugin project, and copy the plugin dll into
     /// the target directory. An explicit <paramref name="assembly"/> picks the project to
