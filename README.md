@@ -9,14 +9,43 @@ database, the settings stores, and the plugin host.
 | Area | Namespace | Contents |
 |---|---|---|
 | **Domain model** | `MediaPager.App.Core.Models` | EF entities + the single `AuthDbContext`: catalogs, catalog items, users (invite-only ASP.NET Identity `AppUser`). |
-| **Migrations** | `MediaPager.App.Core.Migrations` | EF Core migrations (SQLite). Applied at startup via `MigrateAsync`. |
+| **Migrations** | `MediaPager.App.Core.Migrations` | EF Core SQLite migrations. Applied at startup via `MigrateAsync`; PostgreSQL migrations live in the API assembly. |
 | **Settings** | `MediaPager.App.Core.Services` | `IRuntimeSettings`/`RuntimeSettingKeys` (whitelisted runtime settings), `PluginSettingsService` (free-form `plugins.*` settings), and `PluginDeployer` (shared install pipeline: clone → publish → copy dll into a plugins directory). |
 | **Plugin host** | `MediaPager.App.Core.Plugins` | `PluginRegistry`/`IPluginHost` (loaded-plugin catalog) + `PluginActivityStore` (generic plugin jobs and notifications) + `PluginCatalog` + dependency-ordered `PluginLoader`. |
 | **Subtitles** | `MediaPager.App.Core.Subtitles` | `WebVtt.ConvertSrt` — host-side SRT→WebVTT conversion for browser `<track>` elements. |
 
 ## Domain model highlights
 
-- **Single `AuthDbContext`** (EF Core 10 + SQLite); lookups seeded at startup, idempotent.
+- **Single `AuthDbContext`** (EF Core 10); SQLite and PostgreSQL providers use separate migrations for the same model. Lookups are seeded at startup, idempotently.
+- When changing the data model, scaffold a migration for **both** providers. SQLite migrations
+  stay in Core; PostgreSQL migrations and its model snapshot are in the API assembly:
+
+  ```sh
+  MEDIAPAGER_Database__Provider=Sqlite dotnet ef migrations add AddFeature \
+    --project MediaPager.App.Core/MediaPager.App.Core.csproj \
+    --startup-project MediaPager.App.Api/MediaPager.App.Api.csproj
+
+  MEDIAPAGER_DB_PATH= MEDIAPAGER_Database__Provider=PostgreSQL \
+    MEDIAPAGER_ConnectionStrings__AuthDatabase='Host=localhost;Database=mediapager;Username=postgres;Password=postgres' \
+    dotnet ef migrations add AddFeature \
+    --project MediaPager.App.Api/MediaPager.App.Api.csproj \
+    --startup-project MediaPager.App.Api/MediaPager.App.Api.csproj \
+    --output-dir Migrations/PostgreSql
+  ```
+
+  Verify both snapshots after a model change:
+
+  ```sh
+  MEDIAPAGER_Database__Provider=Sqlite dotnet ef migrations has-pending-model-changes \
+    --project MediaPager.App.Core/MediaPager.App.Core.csproj \
+    --startup-project MediaPager.App.Api/MediaPager.App.Api.csproj
+
+  MEDIAPAGER_DB_PATH= MEDIAPAGER_Database__Provider=PostgreSQL \
+    MEDIAPAGER_ConnectionStrings__AuthDatabase='Host=localhost;Database=mediapager;Username=postgres;Password=postgres' \
+    dotnet ef migrations has-pending-model-changes \
+    --project MediaPager.App.Api/MediaPager.App.Api.csproj \
+    --startup-project MediaPager.App.Api/MediaPager.App.Api.csproj
+  ```
 - **Catalogs** — user-owned libraries ("My Movies") typed by `CatalogType` (Movies, TV Shows,
   Music, Podcasts, Audiobooks, Books), each with a derived `MediaType` (Video/Audio/Book).
   `Catalog.Path` is a folder for the future local scanner. Nav order = personal
