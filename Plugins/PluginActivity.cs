@@ -19,17 +19,27 @@ public sealed class PluginActivityStore
         return job;
     }
 
-    public bool RemoveJob(string id)
+    public bool RemoveJob(string id) => RemoveJob(id, ownerPluginId: null);
+
+    public bool RemoveJob(string id, string? ownerPluginId)
     {
-        if (!jobs.TryGetValue(id, out var job) || job.Snapshot().State == PluginJobState.Running)
+        if (!jobs.TryGetValue(id, out var job) ||
+            job.Snapshot().State == PluginJobState.Running ||
+            (ownerPluginId is not null && !string.Equals(job.PluginId, ownerPluginId, StringComparison.Ordinal)))
             return false;
         return jobs.TryRemove(id, out _);
     }
 
-    public void AddNotification(string pluginId, string title, string? message, PluginNotificationLevel level)
+    public void AddNotification(string pluginId, string title, string? message, PluginNotificationLevel level) =>
+        AddNotification(pluginId, title, message, level, error: null);
+
+    public void AddNotification(string pluginId, string title, string? message, PluginNotificationLevel level, PluginError? error)
     {
         var id = Guid.NewGuid().ToString("N")[..12];
-        notifications[id] = new PluginNotification(id, pluginId, title, message, level);
+        notifications[id] = new PluginNotification(id, pluginId, title, message, level)
+        {
+            Error = error,
+        };
     }
 
     public bool DismissNotification(string id) => notifications.TryRemove(id, out _);
@@ -70,7 +80,12 @@ public sealed class PluginActivity(PluginActivityStore store) : IPluginActivity
     public void Notify(string title, string? message = null, PluginNotificationLevel level = PluginNotificationLevel.Info)
         => store.AddNotification(PluginId, title, message, level);
 
+    public void NotifyError(string title, PluginError error, PluginNotificationLevel level = PluginNotificationLevel.Error)
+        => store.AddNotification(PluginId, title, error.Message, level, error);
+
     public IPluginJob BeginJob(string title) => store.CreateJob(PluginId, title);
+
+    public bool ClearJob(IPluginJob job) => store.RemoveJob(job.Id, PluginId);
 
     public IReadOnlyList<PluginJobInfo> Jobs => store.JobsFor(PluginId);
 

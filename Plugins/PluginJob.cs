@@ -15,6 +15,7 @@ public sealed class PluginJob : IPluginJob
     private readonly object gate = new();
 
     private string? status;
+    private PluginError? error;
     private double? progress;
     private PluginJobState state = PluginJobState.Running;
 
@@ -77,6 +78,18 @@ public sealed class PluginJob : IPluginJob
         }
     }
 
+    public void FailWithError(PluginError error)
+    {
+        lock (gate)
+        {
+            if (state != PluginJobState.Running) return;
+            state = PluginJobState.Failed;
+            status = error.Message;
+            this.error = error;
+            stopwatch.Stop();
+        }
+    }
+
     public void Cancel()
     {
         lock (gate)
@@ -92,7 +105,10 @@ public sealed class PluginJob : IPluginJob
     {
         lock (gate)
         {
-            return new PluginJobInfo(Id, PluginId, Title, status, progress, state);
+            return new PluginJobInfo(Id, PluginId, Title, status, progress, state)
+            {
+                Error = error,
+            };
         }
     }
 }
