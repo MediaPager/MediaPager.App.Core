@@ -125,47 +125,66 @@ public sealed class PluginRegistry : IPluginHost
     /// removable; officials are locked like every build-deployed one.</summary>
     public void Add(IMediaPagerPlugin plugin, bool community)
     {
+        var duplicate = false;
         lock (gate)
         {
             if (plugins.Any(candidate =>
                     string.Equals(candidate.Descriptor.Id, plugin.Descriptor.Id, StringComparison.OrdinalIgnoreCase)))
-                return;
-            plugins.Add(plugin);
-            if (community) communityIds.Add(plugin.Descriptor.Id);
-            requirements.TryAdd(plugin.Descriptor.Id, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                duplicate = true;
+            else
+            {
+                plugins.Add(plugin);
+                if (community) communityIds.Add(plugin.Descriptor.Id);
+                requirements.TryAdd(plugin.Descriptor.Id, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            }
         }
+        if (duplicate) DisposePluginWorker(plugin);
     }
 
     /// <summary>Unload a community plugin at runtime. Returns false for official plugins.</summary>
     public bool Remove(string pluginId)
     {
+        IMediaPagerPlugin? removed;
         lock (gate)
         {
             if (!communityIds.Contains(pluginId)) return false;
             if (requirements.Values.Any(requiredIds => requiredIds.Contains(pluginId))) return false;
-            var plugin = plugins.FirstOrDefault(candidate =>
+            removed = plugins.FirstOrDefault(candidate =>
                 string.Equals(candidate.Descriptor.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-            if (plugin is not null) plugins.Remove(plugin);
+            if (removed is not null) plugins.Remove(removed);
             communityIds.Remove(pluginId);
             requirements.Remove(pluginId);
-            return true;
         }
+        DisposePluginWorker(removed);
+        return true;
     }
 
     /// <summary>Unload any plugin regardless of origin — the official "turn off" path
     /// (drops it from Plugins:Required first, so the next boot skips it too).</summary>
     public bool Unload(string pluginId)
     {
+        IMediaPagerPlugin? removed;
         lock (gate)
         {
             if (requirements.Values.Any(requiredIds => requiredIds.Contains(pluginId))) return false;
-            var plugin = plugins.FirstOrDefault(candidate =>
+            removed = plugins.FirstOrDefault(candidate =>
                 string.Equals(candidate.Descriptor.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-            if (plugin is null) return false;
-            plugins.Remove(plugin);
+            if (removed is null) return false;
+            plugins.Remove(removed);
             communityIds.Remove(pluginId);
             requirements.Remove(pluginId);
-            return true;
+        }
+        DisposePluginWorker(removed);
+        return true;
+    }
+
+    private static void DisposePluginWorker(IMediaPagerPlugin? plugin)
+    {
+        if (plugin is not IDisposable disposable) return;
+        try { disposable.Dispose(); }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[plugins] failed to stop worker for {plugin.Descriptor.Id}: {exception.Message}");
         }
     }
 

@@ -17,10 +17,11 @@ public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
         using var scope = scopes.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<AuthDbContext>();
 
-        // Top-level items only (shows, albums, movies, ...): type-ahead noise from
-        // episodes/tracks is suppressed. Prefer prefix title matches, then rating.
+        // Top-level media only (shows, movies, unorganized tracks, ...): type-ahead noise
+        // from episodes/tracks and Music's structural artist/album nodes is suppressed.
         var rows = await database.CatalogItems.AsNoTracking()
             .Where(item => item.ParentId == null
+                && item.Kind != "artist" && item.Kind != "album"
                 && (item.Title.ToLower().Contains(needle)
                     || (item.Overview != null && item.Overview.ToLower().Contains(needle))))
             .OrderByDescending(item => item.Title.ToLower().StartsWith(needle))
