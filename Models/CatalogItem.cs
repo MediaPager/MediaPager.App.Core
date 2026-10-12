@@ -60,6 +60,8 @@ public sealed class CatalogItem
 
     // Optional external identifier (e.g. TMDB/IMDb id) used to match/metadata enrich items.
     public string? ExternalId { get; set; }
+    public string? ImdbId { get; set; }
+    public string? Isbn { get; set; }
 
     // Music-specific identifiers and sequence fields. Music items use ParentId for the
     // per-catalog Artist → Album → Track hierarchy; credits support collaborations and

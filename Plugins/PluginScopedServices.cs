@@ -40,11 +40,9 @@ internal sealed class PluginScopedSettingsStore(
     }
 }
 
-/// <summary>Limits live inter-plugin references to declared dependencies. Downloads also
-/// receives the stream-provider resolver view and the download-provider view it hosts.</summary>
+/// <summary>Limits live inter-plugin references to the dependencies declared in the plugin manifest.</summary>
 internal sealed class PluginScopedHost(
     IPluginHost inner,
-    string pluginId,
     IReadOnlySet<string> dependencyIds) : IPluginHost
 {
     public IReadOnlyList<IMediaPagerPlugin> Plugins => inner.Plugins
@@ -57,24 +55,10 @@ internal sealed class PluginScopedHost(
     public TPlugin? GetPlugin<TPlugin>() where TPlugin : class =>
         GetPlugins<TPlugin>().FirstOrDefault();
 
-    public IReadOnlyList<TPlugin> GetPlugins<TPlugin>() where TPlugin : class
-    {
-        var mayResolveAllStreams = string.Equals(
-            pluginId, "mediapager.actions.downloads", StringComparison.OrdinalIgnoreCase) &&
-            typeof(TPlugin) == typeof(IStreamProviderPlugin);
-        var mayResolveDownloadProviders = string.Equals(
-            pluginId, "mediapager.actions.downloads", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(typeof(TPlugin).FullName,
-                "MediaPager.Plugins.Interface.Download.IDownloadProviderPlugin", StringComparison.Ordinal);
-        return inner.Plugins
-            .Where(plugin => dependencyIds.Contains(plugin.Descriptor.Id) ||
-                             mayResolveAllStreams && plugin is IStreamProviderPlugin ||
-                             mayResolveDownloadProviders && plugin.GetType().GetInterfaces().Any(type =>
-                                 string.Equals(type.FullName,
-                                     "MediaPager.Plugins.Interface.Download.IDownloadProviderPlugin", StringComparison.Ordinal)))
-            .OfType<TPlugin>()
-            .ToList();
-    }
+    public IReadOnlyList<TPlugin> GetPlugins<TPlugin>() where TPlugin : class => inner.Plugins
+        .Where(plugin => dependencyIds.Contains(plugin.Descriptor.Id))
+        .OfType<TPlugin>()
+        .ToList();
 }
 
 /// <summary>Overrides plugin settings with an identity-bound view, scopes IPluginHost to
@@ -85,7 +69,7 @@ internal sealed class PluginServiceProvider(
     IServiceProvider inner,
     IPluginSettingsStore settings,
     IPluginHost pluginHost,
-    string pluginId)
+    IReadOnlySet<string> hostCapabilities)
     : IServiceProvider, IServiceProviderIsService
 {
     private static readonly HashSet<Type> HiddenHostServices =
@@ -109,10 +93,10 @@ internal sealed class PluginServiceProvider(
         if (serviceType == typeof(IPluginSettingsStore)) return settings;
         if (serviceType == typeof(IPluginHost)) return pluginHost;
         if (serviceType == typeof(IMediaToolBroker) &&
-            !string.Equals(pluginId, "mediapager.actions.downloads", StringComparison.OrdinalIgnoreCase))
+            !hostCapabilities.Contains(PluginHostCapabilityNames.MediaTools))
             return null;
         if (serviceType == typeof(IBrowserAutomationBroker) &&
-            !string.Equals(pluginId, "mediapager.stream.vidsrc", StringComparison.OrdinalIgnoreCase))
+            !hostCapabilities.Contains(PluginHostCapabilityNames.BrowserAutomation))
             return null;
         if (serviceType == typeof(IServiceProvider)) return this;
         if (serviceType == typeof(IServiceProviderIsService)) return this;
@@ -128,10 +112,10 @@ internal sealed class PluginServiceProvider(
             serviceType == typeof(IServiceProviderIsService))
             return true;
         if (serviceType == typeof(IMediaToolBroker))
-            return string.Equals(pluginId, "mediapager.actions.downloads", StringComparison.OrdinalIgnoreCase) &&
+            return hostCapabilities.Contains(PluginHostCapabilityNames.MediaTools) &&
                    (_serviceProbe?.IsService(serviceType) ?? false);
         if (serviceType == typeof(IBrowserAutomationBroker))
-            return string.Equals(pluginId, "mediapager.stream.vidsrc", StringComparison.OrdinalIgnoreCase) &&
+            return hostCapabilities.Contains(PluginHostCapabilityNames.BrowserAutomation) &&
                    (_serviceProbe?.IsService(serviceType) ?? false);
         if (HiddenHostServices.Contains(serviceType)) return false;
         return _serviceProbe?.IsService(serviceType) ?? false;
