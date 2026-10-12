@@ -32,7 +32,21 @@ public sealed record PluginManifest(
     IReadOnlyList<string>? Requires = null,
     IReadOnlyList<string>? References = null,
     IReadOnlyDictionary<string, string>? RequirementRepos = null,
-    bool Discoverable = true);
+    bool Discoverable = true,
+    bool Worker = false,
+    IReadOnlySet<string>? HostCapabilities = null);
+
+public static class PluginHostCapabilityNames
+{
+    public const string MediaTools = "media-tools";
+    public const string BrowserAutomation = "browser-automation";
+
+    public static IReadOnlySet<string> Known { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        MediaTools,
+        BrowserAutomation,
+    };
+}
 
 public static class PluginManifestFile
 {
@@ -163,6 +177,40 @@ public static class PluginManifestFile
                 discoverable = discoverableElement.GetBoolean();
             }
 
+            var worker = false;
+            if (document.RootElement.TryGetProperty("worker", out var workerElement))
+            {
+                if (workerElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                {
+                    error = "'worker' must be a boolean.";
+                    return false;
+                }
+                worker = workerElement.GetBoolean();
+            }
+
+            var hostCapabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (document.RootElement.TryGetProperty("hostCapabilities", out var capabilitiesElement))
+            {
+                if (capabilitiesElement.ValueKind != JsonValueKind.Array)
+                {
+                    error = "'hostCapabilities' must be an array of host capability names.";
+                    return false;
+                }
+
+                foreach (var capabilityElement in capabilitiesElement.EnumerateArray())
+                {
+                    var capability = capabilityElement.ValueKind == JsonValueKind.String
+                        ? capabilityElement.GetString()?.Trim().ToLowerInvariant()
+                        : null;
+                    if (string.IsNullOrWhiteSpace(capability) || !PluginHostCapabilityNames.Known.Contains(capability))
+                    {
+                        error = "'hostCapabilities' contains an unsupported capability.";
+                        return false;
+                    }
+                    hostCapabilities.Add(capability);
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(id))
             {
                 error = "has no 'id'.";
@@ -229,7 +277,9 @@ public static class PluginManifestFile
                 requires,
                 references,
                 requirementRepos,
-                discoverable);
+                discoverable,
+                worker,
+                hostCapabilities);
             return true;
         }
         catch (JsonException)

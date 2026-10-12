@@ -51,7 +51,8 @@ public sealed class PluginInstaller(
         foreach (var loaded in registry.Plugins)
             reservedIds.Add(loaded.Descriptor.Id);
         var newPlugins = PluginLoader.LoadFolder(
-            services, Path.Combine(directory, assembly), official is not null, reservedIds);
+            services, Path.Combine(directory, assembly), official is not null, reservedIds,
+            pluginId: outcome.Manifest?.Id ?? key);
         foreach (var plugin in newPlugins)
             registry.Add(plugin, community: official is null);
 
