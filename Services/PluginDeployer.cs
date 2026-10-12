@@ -18,7 +18,7 @@ public sealed record PluginDeployOutcome(string Assembly, string Path, PluginMan
 /// class). Layout matches the build-time deploy exactly: <c>&lt;directory&gt;/&lt;Assembly&gt;/&lt;Assembly&gt;.dll</c>,
 /// so boot just scans the official and community directories.
 /// </summary>
-public sealed class PluginDeployer
+public sealed class PluginDeployer(IPluginBuildSdkProvider buildSdkProvider)
 {
     // Plugin repos live inside the superproject and reference the plugin SDK by relative
     // path (../MediaPager.App.PluginContracts), so a bare plugin checkout can't publish
@@ -107,13 +107,40 @@ public sealed class PluginDeployer
                     cancellationToken);
             }
 
-            progress?.Report(new PluginDeployProgress(40, "publishing",
-                "Building the plugin (dotnet publish — this can take a minute)…"));
-            var publishDir = Path.Combine(staging, "publish");
-            await RunAsync(
-                "dotnet",
-                $"publish \"{project}\" -c Release -o \"{publishDir}\" --nologo -v:q",
+            var buildSdk = await buildSdkProvider.EnsureInstalledAsync(
+                new InlineProgress<PluginBuildSdkProgress>(update =>
+                    progress?.Report(new PluginDeployProgress(
+                        30 + (int)Math.Round(update.Percent * 0.09), "sdk", update.Message))),
                 cancellationToken);
+            progress?.Report(new PluginDeployProgress(40, "publishing",
+                $"Building the plugin with pinned .NET SDK {PluginBuildSdkVersion.Version} (this can take a minute)…"));
+            var publishDir = Path.Combine(staging, "publish");
+            Directory.CreateDirectory(buildSdk.NuGetPackagesDirectory);
+            var publish = new ProcessStartInfo
+            {
+                FileName = buildSdk.Executable,
+                WorkingDirectory = staging,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            publish.ArgumentList.Add("publish");
+            publish.ArgumentList.Add(project);
+            publish.ArgumentList.Add("-c");
+            publish.ArgumentList.Add("Release");
+            publish.ArgumentList.Add("-o");
+            publish.ArgumentList.Add(publishDir);
+            publish.ArgumentList.Add("--nologo");
+            publish.ArgumentList.Add("-v:q");
+            publish.Environment["DOTNET_ROOT"] = buildSdk.InstallDirectory;
+            publish.Environment["DOTNET_MULTILEVEL_LOOKUP"] = "0";
+            publish.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+            publish.Environment["DOTNET_NOLOGO"] = "1";
+            publish.Environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1";
+            publish.Environment["DOTNET_CLI_HOME"] = Path.Combine(buildSdk.InstallDirectory, ".cli-home");
+            publish.Environment["NUGET_PACKAGES"] = buildSdk.NuGetPackagesDirectory;
+            await RunAsync(publish, cancellationToken);
 
             progress?.Report(new PluginDeployProgress(80, "verifying", "Verifying build output…"));
             var source = Path.Combine(publishDir, $"{actualAssembly}.dll");
@@ -125,6 +152,22 @@ public sealed class PluginDeployer
             Directory.CreateDirectory(destinationDirectory);
             foreach (var publishedAssembly in Directory.GetFiles(publishDir, "*.dll"))
                 File.Copy(publishedAssembly, Path.Combine(destinationDirectory, Path.GetFileName(publishedAssembly)), overwrite: true);
+            var publishedUi = Path.Combine(publishDir, "ui");
+            var repositoryUi = Path.Combine(repoDir, "ui");
+            var uiSource = Directory.Exists(publishedUi) ? publishedUi : repositoryUi;
+            var installedUi = Path.Combine(destinationDirectory, "ui");
+            if (Directory.Exists(installedUi))
+            {
+                if ((File.GetAttributes(installedUi) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidOperationException("The existing plugin UI path may not be a symbolic link or reparse point.");
+                Directory.Delete(installedUi, recursive: true);
+            }
+            else if (File.Exists(installedUi))
+            {
+                File.Delete(installedUi);
+            }
+            if (Directory.Exists(uiSource))
+                CopyPluginUiDirectory(uiSource, installedUi);
             var destination = Path.Combine(destinationDirectory, $"{actualAssembly}.dll");
             File.Copy(manifestPath, Path.Combine(Path.GetDirectoryName(destination)!, Path.GetFileName(manifestPath)), overwrite: true);
             return new PluginDeployOutcome(actualAssembly, destination, manifest);
@@ -138,6 +181,38 @@ public sealed class PluginDeployer
             catch
             {
                 // Best-effort cleanup; a leftover temp dir must not fail the install.
+            }
+        }
+    }
+
+    private static void CopyPluginUiDirectory(string sourceDirectory, string destinationDirectory)
+    {
+        if ((File.GetAttributes(sourceDirectory) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Plugin UI assets may not be rooted in a symbolic link or reparse point.");
+        var sourceRoot = Path.GetFullPath(sourceDirectory) + Path.DirectorySeparatorChar;
+        CopyDirectory(sourceDirectory);
+
+        void CopyDirectory(string currentDirectory)
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(currentDirectory))
+            {
+                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidOperationException("Plugin UI assets may not contain symbolic links or reparse points.");
+                var fullPath = Path.GetFullPath(entry);
+                if (!fullPath.StartsWith(sourceRoot,
+                        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    throw new InvalidOperationException("A plugin UI asset escaped its package directory.");
+                var relative = Path.GetRelativePath(sourceDirectory, entry);
+                var destination = Path.Combine(destinationDirectory, relative);
+                if (Directory.Exists(entry))
+                {
+                    Directory.CreateDirectory(destination);
+                    CopyDirectory(entry);
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                File.Copy(entry, destination, overwrite: true);
             }
         }
     }
@@ -223,27 +298,45 @@ public sealed class PluginDeployer
 
     private static async Task<string> RunAsync(string fileName, string arguments, CancellationToken cancellationToken)
     {
-        using var process = new Process
+        var startInfo = new ProcessStartInfo
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
+            FileName = fileName,
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
         };
+        return await RunAsync(startInfo, cancellationToken);
+    }
+
+    private static async Task<string> RunAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
+    {
+        using var process = new Process { StartInfo = startInfo };
         process.Start();
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            throw;
+        }
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
         if (process.ExitCode != 0)
         {
             var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
-            throw new InvalidOperationException($"{fileName} exited {process.ExitCode}: {detail.Trim()}");
+            throw new InvalidOperationException($"{startInfo.FileName} exited {process.ExitCode}: {detail.Trim()}");
         }
         return stdout;
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 }

@@ -6,14 +6,13 @@ namespace MediaPager.App.Core.Plugins;
 
 /// <summary>
 /// Loads plugin assemblies from install directories. Both kinds install the same way —
-/// one folder per plugin, its compiled dll inside (an optional .disabled marker written by
-/// uninstall keeps it off) — and differ only by directory: official (shipped, deployed at
+/// one folder per plugin, its compiled dll inside (an optional .disabled marker keeps a
+/// deployed plugin off, and .uninstalling marks a pending folder removal) — and differ only by directory: official (shipped, deployed at
 /// build, or installed from the official list) vs community (installed from the recognized
 /// community list). Assemblies load into the default load context so their Contracts types
 /// unify with the host's — a collectible ALC would give every <c>IMediaPagerPlugin</c> a
 /// different identity and the registry's IsAssignableFrom checks would silently fail.
-/// Uninstall therefore unloads the plugin from the registry and blocks it on the next boot
-/// rather than trying to unload the assembly.
+/// Uninstall removes its install folder and restarts the API to release the assembly.
 /// </summary>
 public static class PluginLoader
 {
@@ -27,7 +26,8 @@ public static class PluginLoader
     /// </summary>
     public static IReadOnlyList<IMediaPagerPlugin> LoadDirectory(
         IServiceProvider services, string directory, bool official,
-        IReadOnlySet<string>? reservedIds = null, IReadOnlySet<string>? requiredIds = null)
+        IReadOnlySet<string>? reservedIds = null, IReadOnlySet<string>? requiredIds = null,
+        IReadOnlyDictionary<string, string>? pluginIdsByAssembly = null)
     {
         var plugins = new List<IMediaPagerPlugin>();
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
@@ -61,7 +61,10 @@ public static class PluginLoader
 
             foreach (var pluginDir in ready)
             {
-                var loaded = LoadFolder(services, pluginDir, official, reservedIds, requiredIds);
+                TryReadManifest(pluginDir, out var manifest);
+                var pluginId = manifest?.Id ??
+                    pluginIdsByAssembly?.GetValueOrDefault(Path.GetFileName(pluginDir));
+                var loaded = LoadFolder(services, pluginDir, official, reservedIds, requiredIds, pluginId);
                 plugins.AddRange(loaded);
                 foreach (var plugin in loaded)
                     registry?.Add(plugin, community: !official);
@@ -77,16 +80,20 @@ public static class PluginLoader
     /// </summary>
     public static IReadOnlyList<IMediaPagerPlugin> LoadFolder(
         IServiceProvider services, string pluginDir, bool official,
-        IReadOnlySet<string>? reservedIds = null, IReadOnlySet<string>? requiredIds = null)
+        IReadOnlySet<string>? reservedIds = null, IReadOnlySet<string>? requiredIds = null,
+        string? pluginId = null)
     {
         var plugins = new List<IMediaPagerPlugin>();
         if (string.IsNullOrWhiteSpace(pluginDir) || !Directory.Exists(pluginDir))
             return plugins;
         if (File.Exists(Path.Combine(pluginDir, ".disabled")))
             return plugins;
+        if (File.Exists(Path.Combine(pluginDir, ".uninstalling")))
+            return plugins;
 
         if (!TryReadManifest(pluginDir, out var manifest))
             return plugins;
+        pluginId = manifest?.Id ?? pluginId;
         var host = services.GetService<IPluginHost>();
         var missingDependencies = (manifest?.Requires ?? [])
             .Where(id => host?.GetPlugin(id) is null)
@@ -106,49 +113,83 @@ public static class PluginLoader
             return plugins;
         }
 
-        // A plugin's own package dependencies (e.g. Playwright) publish as sibling dlls in
-        // the same folder, but the default context only probes the host's own assets —
-        // pre-load any sibling that isn't loaded yet. Skips what the host already provides
-        // (notably PluginContracts: its types must stay the host's single copy or the
-        // registry's IsAssignableFrom checks would see two identities).
-        foreach (var dependency in Directory.GetFiles(pluginDir, "*.dll"))
+        IReadOnlyList<IMediaPagerPlugin> constructed;
+        var workerFactory = services.GetService<IPluginWorkerFactory>();
+        if (!string.IsNullOrWhiteSpace(pluginId) && workerFactory?.ShouldRunInWorker(manifest, official) == true)
         {
-            if (string.Equals(Path.GetFileName(dependency), Path.GetFileName(assemblyPath),
-                    StringComparison.OrdinalIgnoreCase))
-                continue;
-            var dependencyName = Path.GetFileNameWithoutExtension(dependency);
-            if (AssemblyLoadContext.Default.Assemblies.Any(loaded =>
-                    string.Equals(loaded.GetName().Name, dependencyName, StringComparison.OrdinalIgnoreCase)))
-                continue;
             try
             {
-                AssemblyLoadContext.Default.LoadFromAssemblyPath(dependency);
+                constructed = workerFactory.LoadWorker(
+                    services, pluginDir, pluginId,
+                    manifest?.HostCapabilities ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             }
             catch (Exception exception)
             {
-                Console.Error.WriteLine(
-                    $"[plugins] could not pre-load {dependencyName} for {folderName}: {exception.Message}");
+                Console.Error.WriteLine($"[plugins] could not start worker for {pluginId}: {exception.Message}");
+                return plugins;
             }
         }
-
-        Assembly assembly;
-        try
+        else
         {
-            // Load into the default context so Contracts types unify with the host's.
-            assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
-        }
-        catch (Exception exception)
-        {
-            Console.Error.WriteLine($"[plugins] could not load plugin assembly {assemblyPath}: {exception.Message}");
-            return plugins;
+            // A plugin's own package dependencies publish as sibling DLLs. Pre-load any
+            // dependency the host does not already provide (Contracts remains one identity).
+            foreach (var dependency in Directory.GetFiles(pluginDir, "*.dll"))
+            {
+                if (string.Equals(Path.GetFileName(dependency), Path.GetFileName(assemblyPath),
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var dependencyName = Path.GetFileNameWithoutExtension(dependency);
+                if (AssemblyLoadContext.Default.Assemblies.Any(loaded =>
+                        string.Equals(loaded.GetName().Name, dependencyName, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                try
+                {
+                    AssemblyLoadContext.Default.LoadFromAssemblyPath(dependency);
+                }
+                catch (Exception exception)
+                {
+                    Console.Error.WriteLine(
+                        $"[plugins] could not pre-load {dependencyName} for {folderName}: {exception.Message}");
+                }
+            }
+
+            Assembly assembly;
+            try
+            {
+                // Load into the default context so Contracts types unify with the host's.
+                assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(assemblyPath);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"[plugins] could not load plugin assembly {assemblyPath}: {exception.Message}");
+                return plugins;
+            }
+
+            var pluginServices = services;
+            if (services.GetService<IPluginSettingsRepository>() is { } settingsRepository)
+            {
+                if (string.IsNullOrWhiteSpace(pluginId))
+                    throw new InvalidOperationException(
+                        $"Plugin folder '{folderName}' has no identity manifest or catalog ID; its settings cannot be safely scoped.");
+                pluginServices = new PluginServiceProvider(
+                    services,
+                    new PluginScopedSettingsStore(settingsRepository, pluginId),
+                    new PluginScopedHost(
+                        host ?? throw new InvalidOperationException("Plugin host services are not registered."),
+                        new HashSet<string>(manifest?.Requires ?? [], StringComparer.OrdinalIgnoreCase)),
+                    manifest?.HostCapabilities ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            }
+
+            constructed = ConstructPlugins(assembly, pluginServices);
         }
 
-        foreach (var plugin in ConstructPlugins(assembly, services))
+        foreach (var plugin in constructed)
         {
             if (!official && reservedIds is not null && reservedIds.Contains(plugin.Descriptor.Id))
             {
                 Console.Error.WriteLine(
                     $"[plugins] rejected community plugin {plugin.Descriptor.Id}: id collides with an official plugin");
+                DisposeIfWorker(plugin);
                 continue;
             }
 
@@ -156,6 +197,7 @@ public static class PluginLoader
             {
                 Console.WriteLine(
                     $"[plugins] skipped official {plugin.Descriptor.Id}: not in Plugins:Required:Official");
+                DisposeIfWorker(plugin);
                 continue;
             }
 
@@ -166,6 +208,18 @@ public static class PluginLoader
                 $"[plugins] loaded {(official ? "official" : "community")} {plugin.Descriptor.Id} v{plugin.Descriptor.Version}");
         }
         return plugins;
+    }
+
+    private static void DisposeIfWorker(IMediaPagerPlugin plugin)
+    {
+        if (plugin is IDisposable disposable)
+        {
+            try { disposable.Dispose(); }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"[plugins] failed to stop rejected worker {plugin.Descriptor.Id}: {exception.Message}");
+            }
+        }
     }
 
     private static List<IMediaPagerPlugin> ConstructPlugins(Assembly assembly, IServiceProvider services)

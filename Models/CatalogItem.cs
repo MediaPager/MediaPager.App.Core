@@ -12,6 +12,7 @@ namespace MediaPager.App.Core.Models;
 [Index(nameof(ParentId))]
 [Index(nameof(Title))]
 [Index(nameof(Kind))]
+[Index(nameof(CatalogId), nameof(Kind), nameof(MusicBrainzId))]
 [Index(nameof(StoragePath), IsUnique = true)]
 [Index(nameof(ExternalId))]
 public sealed class CatalogItem
@@ -59,6 +60,19 @@ public sealed class CatalogItem
 
     // Optional external identifier (e.g. TMDB/IMDb id) used to match/metadata enrich items.
     public string? ExternalId { get; set; }
+    public string? ImdbId { get; set; }
+    public string? Isbn { get; set; }
+
+    // Music-specific identifiers and sequence fields. Music items use ParentId for the
+    // per-catalog Artist → Album → Track hierarchy; credits support collaborations and
+    // compilation releases without duplicating tracks into several albums.
+    public string? MusicBrainzId { get; set; }
+    public string? Isrc { get; set; }
+    public int? TrackNumber { get; set; }
+    public int? TrackCount { get; set; }
+    public int? DiscNumber { get; set; }
+    public int? DiscCount { get; set; }
+    public List<CatalogItemMusicArtistCredit> MusicArtistCredits { get; set; } = [];
 
     public List<CatalogItemTag> Tags { get; set; } = [];
     public List<CatalogItemRating> Ratings { get; set; } = [];

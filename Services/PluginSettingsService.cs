@@ -5,12 +5,11 @@ using Microsoft.Extensions.DependencyInjection;
 namespace MediaPager.App.Core.Services;
 
 /// <summary>
-/// IPluginSettingsStore backed by the runtime settings DB under the "plugins." key prefix.
-/// Bypasses the IRuntimeSettings whitelist (plugin keys are free-form), opening a scope per
-/// call so a singleton can safely use the scoped AuthDbContext. Config values in the
-/// "plugins:*" shape are the fallback.
+/// Host-only repository backed by the runtime settings DB under the "plugins." key prefix.
+/// Plugin constructors receive a bound IPluginSettingsStore view instead of this
+/// unscoped repository. Config values in the "plugins:*" shape are the fallback.
 /// </summary>
-public sealed class PluginSettingsService(IServiceScopeFactory scopeFactory) : IPluginSettingsStore
+public sealed class PluginSettingsService(IServiceScopeFactory scopeFactory) : IPluginSettingsRepository
 {
     public const string KeyPrefix = "plugins.";
 
