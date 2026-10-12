@@ -6,14 +6,13 @@ namespace MediaPager.App.Core.Plugins;
 
 /// <summary>
 /// Loads plugin assemblies from install directories. Both kinds install the same way —
-/// one folder per plugin, its compiled dll inside (an optional .disabled marker written by
-/// uninstall keeps it off) — and differ only by directory: official (shipped, deployed at
+/// one folder per plugin, its compiled dll inside (an optional .disabled marker keeps a
+/// deployed plugin off, and .uninstalling marks a pending folder removal) — and differ only by directory: official (shipped, deployed at
 /// build, or installed from the official list) vs community (installed from the recognized
 /// community list). Assemblies load into the default load context so their Contracts types
 /// unify with the host's — a collectible ALC would give every <c>IMediaPagerPlugin</c> a
 /// different identity and the registry's IsAssignableFrom checks would silently fail.
-/// Uninstall therefore unloads the plugin from the registry and blocks it on the next boot
-/// rather than trying to unload the assembly.
+/// Uninstall removes its install folder and restarts the API to release the assembly.
 /// </summary>
 public static class PluginLoader
 {
@@ -89,6 +88,8 @@ public static class PluginLoader
             return plugins;
         if (File.Exists(Path.Combine(pluginDir, ".disabled")))
             return plugins;
+        if (File.Exists(Path.Combine(pluginDir, ".uninstalling")))
+            return plugins;
 
         if (!TryReadManifest(pluginDir, out var manifest))
             return plugins;
@@ -114,11 +115,13 @@ public static class PluginLoader
 
         IReadOnlyList<IMediaPagerPlugin> constructed;
         var workerFactory = services.GetService<IPluginWorkerFactory>();
-        if (!string.IsNullOrWhiteSpace(pluginId) && workerFactory?.ShouldRunInWorker(pluginId, official) == true)
+        if (!string.IsNullOrWhiteSpace(pluginId) && workerFactory?.ShouldRunInWorker(manifest, official) == true)
         {
             try
             {
-                constructed = workerFactory.LoadWorker(services, pluginDir, pluginId);
+                constructed = workerFactory.LoadWorker(
+                    services, pluginDir, pluginId,
+                    manifest?.HostCapabilities ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             }
             catch (Exception exception)
             {
@@ -173,9 +176,8 @@ public static class PluginLoader
                     new PluginScopedSettingsStore(settingsRepository, pluginId),
                     new PluginScopedHost(
                         host ?? throw new InvalidOperationException("Plugin host services are not registered."),
-                        pluginId,
                         new HashSet<string>(manifest?.Requires ?? [], StringComparer.OrdinalIgnoreCase)),
-                    pluginId);
+                    manifest?.HostCapabilities ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             }
 
             constructed = ConstructPlugins(assembly, pluginServices);

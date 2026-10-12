@@ -4,10 +4,11 @@ namespace MediaPager.App.Core.Plugins;
 /// proxy objects for the capability interfaces that process implements.</summary>
 public interface IPluginWorkerFactory
 {
-    bool ShouldRunInWorker(string pluginId, bool official);
+    bool ShouldRunInWorker(PluginManifest? manifest, bool official);
 
     IReadOnlyList<IMediaPagerPlugin> LoadWorker(
         IServiceProvider hostServices,
         string pluginDirectory,
-        string pluginId);
+        string pluginId,
+        IReadOnlySet<string> hostCapabilities);
 }

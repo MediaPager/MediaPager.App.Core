@@ -163,6 +163,12 @@ namespace MediaPager.App.Core.Migrations
                     b.Property<string>("ImageUrl")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ImdbId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Isbn")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Isrc")
                         .HasColumnType("TEXT");
 
