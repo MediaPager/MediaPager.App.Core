@@ -40,11 +40,13 @@ public static class PluginHostCapabilityNames
 {
     public const string MediaTools = "media-tools";
     public const string BrowserAutomation = "browser-automation";
+    public const string LibraryStore = "library-store";
 
     public static IReadOnlySet<string> Known { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         MediaTools,
         BrowserAutomation,
+        LibraryStore,
     };
 }
 
