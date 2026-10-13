@@ -81,7 +81,6 @@ internal sealed class PluginServiceProvider(
         typeof(PluginRegistry),
         typeof(PluginDeployer),
         typeof(PluginInstaller),
-        typeof(ILibraryStore),
         typeof(AuthDbContext),
     ];
 
@@ -97,6 +96,9 @@ internal sealed class PluginServiceProvider(
             return null;
         if (serviceType == typeof(IBrowserAutomationBroker) &&
             !hostCapabilities.Contains(PluginHostCapabilityNames.BrowserAutomation))
+            return null;
+        if (serviceType == typeof(ILibraryStore) &&
+            !hostCapabilities.Contains(PluginHostCapabilityNames.LibraryStore))
             return null;
         if (serviceType == typeof(IServiceProvider)) return this;
         if (serviceType == typeof(IServiceProviderIsService)) return this;
@@ -116,6 +118,9 @@ internal sealed class PluginServiceProvider(
                    (_serviceProbe?.IsService(serviceType) ?? false);
         if (serviceType == typeof(IBrowserAutomationBroker))
             return hostCapabilities.Contains(PluginHostCapabilityNames.BrowserAutomation) &&
+                   (_serviceProbe?.IsService(serviceType) ?? false);
+        if (serviceType == typeof(ILibraryStore))
+            return hostCapabilities.Contains(PluginHostCapabilityNames.LibraryStore) &&
                    (_serviceProbe?.IsService(serviceType) ?? false);
         if (HiddenHostServices.Contains(serviceType)) return false;
         return _serviceProbe?.IsService(serviceType) ?? false;
