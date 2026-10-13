@@ -79,8 +79,24 @@ public static class PluginCatalog
     }
 
     public static RequiredPluginSets ReadRequired(IConfiguration configuration) => new(
-        ReadIdSet(configuration.GetSection("Plugins:Required:Official")),
-        ReadIdSet(configuration.GetSection("Plugins:Required:Community")));
+        ReadIdSet(RequiredSection(configuration, "Official")),
+        ReadIdSet(RequiredSection(configuration, "Community")));
+
+    private static IConfigurationSection RequiredSection(IConfiguration configuration, string kind)
+    {
+        var currentPath = $"Settings:Plugins:Required:{kind}";
+        var legacyPath = $"Plugins:Required:{kind}";
+        var current = configuration.GetSection(currentPath);
+        var legacy = configuration.GetSection(legacyPath);
+        var environmentNames = Environment.GetEnvironmentVariables().Keys.OfType<string>().ToArray();
+        var hasCurrentEnvironment = environmentNames.Any(name =>
+            name.StartsWith("MEDIAPAGER_Settings__Plugins__Required__" + kind + "__", StringComparison.OrdinalIgnoreCase));
+        var hasLegacyEnvironment = environmentNames.Any(name =>
+            name.StartsWith("MEDIAPAGER_Plugins__Required__" + kind + "__", StringComparison.OrdinalIgnoreCase));
+        if (hasCurrentEnvironment) return current;
+        if (hasLegacyEnvironment || legacy.Exists()) return legacy;
+        return current.Exists() ? current : legacy;
+    }
 
     public static bool IsSystemRequired(IConfiguration configuration, string pluginId) =>
         ReadOfficial(configuration).Any(entry => entry.SystemRequired &&

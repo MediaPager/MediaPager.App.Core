@@ -17,19 +17,19 @@ internal sealed class PluginScopedSettingsStore(
     public Task<string?> GetAsync(string pluginKey, string name, CancellationToken cancellationToken = default)
     {
         EnsureOwnNamespace(pluginKey);
-        return repository.GetAsync(_pluginKey, name, cancellationToken);
+        return repository.GetAsync(pluginId, name, cancellationToken);
     }
 
     public Task SetAsync(string pluginKey, string name, string? value, CancellationToken cancellationToken = default)
     {
         EnsureOwnNamespace(pluginKey);
-        return repository.SetAsync(_pluginKey, name, value, cancellationToken);
+        return repository.SetAsync(pluginId, name, value, cancellationToken);
     }
 
     public Task<IReadOnlyDictionary<string, string>> GetAllAsync(string pluginKey, CancellationToken cancellationToken = default)
     {
         EnsureOwnNamespace(pluginKey);
-        return repository.GetAllAsync(_pluginKey, cancellationToken);
+        return repository.GetAllAsync(pluginId, cancellationToken);
     }
 
     private void EnsureOwnNamespace(string pluginKey)
