@@ -4,8 +4,8 @@ using System.Data.Common;
 
 /// <summary>
 /// Runtime settings live in the auth database so the SPA and the desktop launcher share
-/// one source of truth. Configuration (appsettings/user-secrets/env vars) remains the fallback.
-/// The database location itself always comes from configuration, never from this store.
+/// one source of truth. Configuration remains the fallback. Database connection details are
+/// bootstrap configuration and are deliberately excluded from this store.
 /// </summary>
 namespace MediaPager.App.Core.Services;
 
@@ -15,12 +15,16 @@ public interface IRuntimeSettings
     Task<IReadOnlyDictionary<string, string>> GetAllAsync(CancellationToken cancellationToken = default);
     Task SetAllAsync(IReadOnlyDictionary<string, string> values, CancellationToken cancellationToken = default);
     Task SeedMissingFromConfigurationAsync(CancellationToken cancellationToken = default);
+    Task RemoveDatabaseSettingsAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class RuntimeSettingsService(AuthDbContext database, IConfiguration configuration) : IRuntimeSettings
 {
     public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
     {
+        if (RuntimeSettingKeys.DatabaseConfigurationKeys.Contains(key))
+            return SettingsConfigurationKeys.ReadConfiguredValue(configuration, key);
+
         var environment = SettingsConfigurationKeys.ReadEnvironmentValue(key);
         if (!string.IsNullOrWhiteSpace(environment)) return environment;
 
@@ -79,6 +83,19 @@ public sealed class RuntimeSettingsService(AuthDbContext database, IConfiguratio
         await database.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task RemoveDatabaseSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var keys = RuntimeSettingKeys.DatabaseConfigurationKeys
+            .Concat(["Database:Provider", "Auth:DatabasePath", "ConnectionStrings:AuthDatabase"])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stored = await database.RuntimeSettings
+            .Where(setting => keys.Contains(setting.Key))
+            .ToListAsync(cancellationToken);
+        if (stored.Count == 0) return;
+        database.RuntimeSettings.RemoveRange(stored);
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task SetAllAsync(IReadOnlyDictionary<string, string> values, CancellationToken cancellationToken = default)
     {
         foreach (var (key, value) in values)
@@ -105,10 +122,11 @@ public sealed class RuntimeSettingsService(AuthDbContext database, IConfiguratio
 }
 
 /// <summary>
-/// Settings that may be stored in the DB and edited at runtime. DB location is intentionally
-/// excluded. Provider credentials (TMDB/OpenSubtitles/Subdl/Mailgun/...) are NOT here — they
+/// Settings that may be stored in the DB and edited at runtime. Database connection details
+/// are configuration-only and listed separately below, never included in <see cref="All"/>.
+/// Provider credentials (TMDB/OpenSubtitles/Subdl/Mailgun/...) are NOT here — they
 /// are plugin settings under plugins.&lt;key&gt;.* (see IPluginSettingsStore); these are the
-/// host-level keys: active-provider selectors, artwork directory, site URL, and email-template source.
+/// host-level keys: active-provider selectors, artwork directories, and site URL.
 /// </summary>
 public static class RuntimeSettingKeys
 {
@@ -125,6 +143,7 @@ public static class RuntimeSettingKeys
     public const string DatabaseCatalog = SettingsConfigurationKeys.DbCatalog;
     public const string DatabaseUser = SettingsConfigurationKeys.DbUser;
     public const string DatabasePassword = SettingsConfigurationKeys.DbPassword;
+    public const string DatabaseConnectionString = SettingsConfigurationKeys.DbConnectionString;
     public const string DatabaseSslMode = SettingsConfigurationKeys.DbSslMode;
     public const string DatabaseConnectionTimeout = SettingsConfigurationKeys.DbConnectionTimeout;
     public const string ScopeSecurityPath = SettingsConfigurationKeys.AppScopeSecurityPath;
@@ -144,18 +163,24 @@ public static class RuntimeSettingKeys
         ArtworkPosterDirectory,
         ArtworkBackgroundDirectory,
         FrontendBaseUrl,
+        StorageRoot,
+        ToolsDirectory,
+        CommunityPluginsDirectory,
+        InstalledOfficialPluginsDirectory,
+    };
+
+    public static readonly IReadOnlySet<string> DatabaseConfigurationKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
         DatabaseProvider,
         DatabasePath,
         DatabaseHost,
         DatabasePort,
         DatabaseCatalog,
         DatabaseUser,
+        DatabasePassword,
         DatabaseSslMode,
         DatabaseConnectionTimeout,
-        StorageRoot,
-        ToolsDirectory,
-        CommunityPluginsDirectory,
-        InstalledOfficialPluginsDirectory,
+        DatabaseConnectionString,
     };
 }
 
@@ -169,6 +194,7 @@ public static class SettingsConfigurationKeys
     public const string DbCatalog = "Settings:Db:Catalog";
     public const string DbUser = "Settings:Db:User";
     public const string DbPassword = "Settings:Db:Password";
+    public const string DbConnectionString = "Settings:Db:ConnectionString";
     public const string DbSslMode = "Settings:Db:SslMode";
     public const string DbConnectionTimeout = "Settings:Db:ConnectionTimeoutSeconds";
     public const string AppScopeSecurityPath = "Settings:App:ScopeSecurityPath";
@@ -230,7 +256,8 @@ public static class SettingsConfigurationKeys
             value = configuration[alias];
             if (!string.IsNullOrWhiteSpace(value)) return value;
         }
-        value = LegacyPostgresConnectionValue(configuration.GetConnectionString("AuthDatabase"), key);
+        value = LegacyPostgresConnectionValue(
+            configuration["Settings:Db:ConnectionString"] ?? configuration.GetConnectionString("AuthDatabase"), key);
         if (!string.IsNullOrWhiteSpace(value)) return value;
         if (key == DbPath && !string.Equals(
                 ReadConfiguredValue(configuration, DbProvider), "Sqlite", StringComparison.OrdinalIgnoreCase))
