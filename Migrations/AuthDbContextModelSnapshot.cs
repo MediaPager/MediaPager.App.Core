@@ -29,6 +29,9 @@ namespace MediaPager.App.Core.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Email")
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
@@ -38,6 +41,9 @@ namespace MediaPager.App.Core.Migrations
 
                     b.Property<string>("FirstName")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LastName")
                         .HasColumnType("TEXT");

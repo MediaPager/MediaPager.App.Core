@@ -18,7 +18,9 @@ public sealed record PluginDeployOutcome(string Assembly, string Path, PluginMan
 /// class). Layout matches the build-time deploy exactly: <c>&lt;directory&gt;/&lt;Assembly&gt;/&lt;Assembly&gt;.dll</c>,
 /// so boot just scans the official and community directories.
 /// </summary>
-public sealed class PluginDeployer(IPluginBuildSdkProvider buildSdkProvider)
+public sealed class PluginDeployer(
+    IPluginBuildSdkProvider buildSdkProvider,
+    IGitPrivateKeyProvider gitPrivateKeyProvider)
 {
     // Plugin repos live inside the superproject and reference the plugin SDK by relative
     // path (../MediaPager.App.PluginContracts), so a bare plugin checkout can't publish
@@ -49,7 +51,10 @@ public sealed class PluginDeployer(IPluginBuildSdkProvider buildSdkProvider)
                 $"Cloning {repo}{(string.IsNullOrWhiteSpace(branch) ? "" : $" ({branch})")}…"));
             var repoDir = Path.Combine(staging, "repo");
             var branchArg = string.IsNullOrWhiteSpace(branch) ? "" : $"--branch \"{branch}\" ";
-            var (cloneUrl, gitArgs) = GitRepoUrl.Resolve(repo);
+            await using var privateKeyLease = GitRepoUrl.IsSshLike(repo)
+                ? await gitPrivateKeyProvider.CreateLeaseAsync(cancellationToken)
+                : null;
+            var (cloneUrl, gitArgs) = GitRepoUrl.Resolve(repo, privateKeyLease?.Path);
             await RunAsync("git", $"{gitArgs}clone --depth 1 --quiet {branchArg}\"{cloneUrl}\" \"{repoDir}\"", cancellationToken);
 
             // Every MediaPager plugin ships MediaPager.Plugins.<Name>.manifest.json at the
@@ -77,7 +82,10 @@ public sealed class PluginDeployer(IPluginBuildSdkProvider buildSdkProvider)
                 if (Directory.Exists(referenceDirectory))
                     throw new InvalidOperationException($"More than one manifest reference resolves to '{referenceName}'.");
                 progress?.Report(new PluginDeployProgress(24, "references", $"Cloning project reference {referenceName}…"));
-                var (referenceUrl, referenceGitArgs) = GitRepoUrl.Resolve(referenceRepo);
+                await using var referenceKeyLease = GitRepoUrl.IsSshLike(referenceRepo)
+                    ? await gitPrivateKeyProvider.CreateLeaseAsync(cancellationToken)
+                    : null;
+                var (referenceUrl, referenceGitArgs) = GitRepoUrl.Resolve(referenceRepo, referenceKeyLease?.Path);
                 await RunAsync("git", $"{referenceGitArgs}clone --depth 1 --quiet \"{referenceUrl}\" \"{referenceDirectory}\"", cancellationToken);
             }
 
@@ -226,7 +234,10 @@ public sealed class PluginDeployer(IPluginBuildSdkProvider buildSdkProvider)
         if (string.IsNullOrWhiteSpace(repo))
             throw new ArgumentException("A repository URL is required.", nameof(repo));
 
-        var (remotesUrl, gitArgs) = GitRepoUrl.Resolve(repo);
+        await using var privateKeyLease = GitRepoUrl.IsSshLike(repo)
+            ? await gitPrivateKeyProvider.CreateLeaseAsync(cancellationToken)
+            : null;
+        var (remotesUrl, gitArgs) = GitRepoUrl.Resolve(repo, privateKeyLease?.Path);
         var heads = await RunAsync("git", $"{gitArgs}ls-remote --heads \"{remotesUrl}\"", cancellationToken);
         var branches = heads
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

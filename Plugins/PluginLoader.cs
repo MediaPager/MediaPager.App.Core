@@ -105,6 +105,12 @@ public static class PluginLoader
             return plugins;
         }
 
+        if (official && pluginId is not null && host?.GetPlugin(pluginId) is not null)
+        {
+            Console.WriteLine($"[plugins] skipped duplicate official {pluginId} in {pluginDir}; an earlier official copy is already loaded");
+            return plugins;
+        }
+
         var folderName = Path.GetFileName(pluginDir);
         var assemblyPath = Path.Combine(pluginDir, $"{folderName}.dll");
         if (!File.Exists(assemblyPath))
@@ -199,6 +205,19 @@ public static class PluginLoader
                     $"[plugins] skipped official {plugin.Descriptor.Id}: not in Plugins:Required:Official");
                 DisposeIfWorker(plugin);
                 continue;
+            }
+
+            if (plugin is IPluginSettingsSchema schema &&
+                services.GetService<IPluginSettingsRepository>() is { } settingsRepository)
+            {
+                try
+                {
+                    settingsRepository.SeedSchemaDefaultsAsync(plugin, schema).GetAwaiter().GetResult();
+                }
+                catch (Exception exception)
+                {
+                    Console.Error.WriteLine($"[plugins] could not seed settings for {plugin.Descriptor.Id}: {exception.Message}");
+                }
             }
 
             services.GetService<PluginRegistry>()?.SetRequirements(

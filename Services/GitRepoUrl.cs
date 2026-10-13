@@ -72,13 +72,15 @@ public static class GitRepoUrl
     /// <summary>The URL to hand git plus any -c arguments it needs. ssh-form URLs stay
     /// ssh only when <c>MEDIAPAGER_GIT_SSH_PRIVATE_KEY_PATH</c> is set (and exists);
     /// otherwise they become https. Returns an empty argument prefix for plain https.</summary>
-    public static (string Url, string GitArguments) Resolve(string repo)
+    public static (string Url, string GitArguments) Resolve(string repo, string? configuredKeyPath = null)
     {
         var trimmed = repo.Trim();
         if (!IsSshLike(trimmed))
             return (trimmed, string.Empty);
 
-        var keyPath = Environment.GetEnvironmentVariable(SshKeyPathVariable);
+        var keyPath = string.IsNullOrWhiteSpace(configuredKeyPath)
+            ? Environment.GetEnvironmentVariable(SshKeyPathVariable)
+            : configuredKeyPath;
         if (string.IsNullOrWhiteSpace(keyPath))
             return (ToHttps(trimmed), string.Empty);
         if (!File.Exists(keyPath))

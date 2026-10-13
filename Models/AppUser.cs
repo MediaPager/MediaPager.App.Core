@@ -5,6 +5,8 @@ namespace MediaPager.App.Core.Models;
 public sealed class AppUser : IdentityUser
 {
 	public string Scopes { get; set; } = "";
+	public bool IsActive { get; set; } = true;
+	public DateTimeOffset? DeletedAt { get; set; }
 
 	public string? FirstName { get; set; }
 	public string? LastName { get; set; }
@@ -15,5 +17,10 @@ public sealed class AppUser : IdentityUser
 	public DateTimeOffset? PendingEmailExpiresAt { get; set; }
 
 	public IReadOnlyCollection<string> GetScopes() => Scopes
-		.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+		.Select(scope => string.Equals(scope, "admin:can-invite", StringComparison.OrdinalIgnoreCase)
+			? "users:can-invite"
+			: scope.ToLowerInvariant())
+		.Distinct(StringComparer.OrdinalIgnoreCase)
+		.ToArray();
 }
