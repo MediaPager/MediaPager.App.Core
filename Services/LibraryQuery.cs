@@ -8,7 +8,18 @@ namespace MediaPager.App.Core.Services;
 /// leaks into plugin lifetime.</summary>
 public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
 {
-    public async Task<IReadOnlyList<LibraryItemHit>> SearchAsync(string query, int limit, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<LibraryItemHit>> SearchAsync(
+        string query,
+        int limit,
+        CancellationToken cancellationToken = default) =>
+        SearchAsync(query, limit, mediaTypeSlug: null, catalogTypeSlug: null, cancellationToken: cancellationToken);
+
+    public async Task<IReadOnlyList<LibraryItemHit>> SearchAsync(
+        string query,
+        int limit,
+        string? mediaTypeSlug,
+        string? catalogTypeSlug,
+        CancellationToken cancellationToken = default)
     {
         var needle = query.Trim().ToLowerInvariant();
         if (needle.Length == 0 || limit <= 0)
@@ -19,11 +30,24 @@ public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
 
         // Top-level media only (shows, movies, unorganized tracks, ...): type-ahead noise
         // from episodes/tracks and Music's structural artist/album nodes is suppressed.
-        var rows = await database.CatalogItems.AsNoTracking()
+        var items = database.CatalogItems.AsNoTracking()
             .Where(item => item.ParentId == null
                 && item.Kind != "artist" && item.Kind != "album"
                 && (item.Title.ToLower().Contains(needle)
-                    || (item.Overview != null && item.Overview.ToLower().Contains(needle))))
+                    || (item.Overview != null && item.Overview.ToLower().Contains(needle))));
+        if (!string.IsNullOrWhiteSpace(mediaTypeSlug))
+        {
+            var normalizedMediaType = mediaTypeSlug.Trim().ToLowerInvariant();
+            items = items.Where(item => item.MediaType != null && item.MediaType.Slug == normalizedMediaType);
+        }
+        if (!string.IsNullOrWhiteSpace(catalogTypeSlug))
+        {
+            var normalizedCatalogType = catalogTypeSlug.Trim().ToLowerInvariant();
+            items = items.Where(item => item.Catalog != null && item.Catalog.CatalogType != null &&
+                                        item.Catalog.CatalogType.Slug == normalizedCatalogType);
+        }
+
+        var rows = await items
             .OrderByDescending(item => item.Title.ToLower().StartsWith(needle))
             .ThenByDescending(item => item.Rating)
             .ThenBy(item => item.Title)
@@ -70,6 +94,7 @@ public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
         "podcast" => MediaKind.Podcast,
         "audiobook" => MediaKind.Audiobook,
         "book" => MediaKind.Book,
+        "document" => MediaKind.Document,
         "episode" => typeSlug == "audio" ? MediaKind.Podcast : MediaKind.Tv,
         "track" => MediaKind.Music,
         "chapter" => typeSlug == "audio" ? MediaKind.Audiobook : MediaKind.Book,
@@ -77,6 +102,7 @@ public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
         {
             "audio" => MediaKind.Music,
             "book" => MediaKind.Book,
+            "documents" => MediaKind.Document,
             _ => MediaKind.Movie
         }
     };
