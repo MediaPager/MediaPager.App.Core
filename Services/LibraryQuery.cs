@@ -14,11 +14,20 @@ public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
         CancellationToken cancellationToken = default) =>
         SearchAsync(query, limit, mediaTypeSlug: null, catalogTypeSlug: null, cancellationToken: cancellationToken);
 
+    public Task<IReadOnlyList<LibraryItemHit>> SearchAsync(
+        string query,
+        int limit,
+        string? mediaTypeSlug,
+        string? catalogTypeSlug,
+        CancellationToken cancellationToken = default) =>
+        SearchAsync(query, limit, mediaTypeSlug, catalogTypeSlug, catalogId: null, cancellationToken: cancellationToken);
+
     public async Task<IReadOnlyList<LibraryItemHit>> SearchAsync(
         string query,
         int limit,
         string? mediaTypeSlug,
         string? catalogTypeSlug,
+        int? catalogId,
         CancellationToken cancellationToken = default)
     {
         var needle = query.Trim().ToLowerInvariant();
@@ -46,6 +55,8 @@ public sealed class LibraryQuery(IServiceScopeFactory scopes) : ILibraryQuery
             items = items.Where(item => item.Catalog != null && item.Catalog.CatalogType != null &&
                                         item.Catalog.CatalogType.Slug == normalizedCatalogType);
         }
+        if (catalogId is int selectedCatalogId)
+            items = items.Where(item => item.CatalogId == selectedCatalogId);
 
         var rows = await items
             .OrderByDescending(item => item.Title.ToLower().StartsWith(needle))
