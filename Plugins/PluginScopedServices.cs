@@ -100,6 +100,9 @@ internal sealed class PluginServiceProvider(
         if (serviceType == typeof(ILibraryStore) &&
             !hostCapabilities.Contains(PluginHostCapabilityNames.LibraryStore))
             return null;
+        if (serviceType == typeof(IPluginEmailSender) &&
+            !hostCapabilities.Contains(PluginHostCapabilityNames.EmailSending))
+            return null;
         if (serviceType == typeof(IServiceProvider)) return this;
         if (serviceType == typeof(IServiceProviderIsService)) return this;
         if (HiddenHostServices.Contains(serviceType)) return null;
@@ -121,6 +124,9 @@ internal sealed class PluginServiceProvider(
                    (_serviceProbe?.IsService(serviceType) ?? false);
         if (serviceType == typeof(ILibraryStore))
             return hostCapabilities.Contains(PluginHostCapabilityNames.LibraryStore) &&
+                   (_serviceProbe?.IsService(serviceType) ?? false);
+        if (serviceType == typeof(IPluginEmailSender))
+            return hostCapabilities.Contains(PluginHostCapabilityNames.EmailSending) &&
                    (_serviceProbe?.IsService(serviceType) ?? false);
         if (HiddenHostServices.Contains(serviceType)) return false;
         return _serviceProbe?.IsService(serviceType) ?? false;

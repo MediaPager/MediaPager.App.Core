@@ -25,6 +25,19 @@ public sealed class RuntimeSettingsService(AuthDbContext database, IConfiguratio
         if (RuntimeSettingKeys.DatabaseConfigurationKeys.Contains(key))
             return SettingsConfigurationKeys.ReadConfiguredValue(configuration, key);
 
+        // The site URL is user-editable runtime state. Honor a saved value first; deployment
+        // configuration is its fallback, as described by the Settings UI.
+        if (key == SettingsConfigurationKeys.SiteBaseUrl)
+        {
+            var savedSiteUrl = await database.RuntimeSettings
+                .AsNoTracking()
+                .Where(setting => setting.Key == key)
+                .Select(setting => setting.Value)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(savedSiteUrl)) return savedSiteUrl;
+            return SettingsConfigurationKeys.ReadConfiguredValue(configuration, key);
+        }
+
         var environment = SettingsConfigurationKeys.ReadEnvironmentValue(key);
         if (!string.IsNullOrWhiteSpace(environment)) return environment;
 
@@ -74,6 +87,10 @@ public sealed class RuntimeSettingsService(AuthDbContext database, IConfiguratio
     {
         foreach (var key in RuntimeSettingKeys.All)
         {
+            // Keep the site URL as a fallback unless the user explicitly saves an override.
+            // Persisting the default here would make it look like an override on later boots.
+            if (key == SettingsConfigurationKeys.SiteBaseUrl) continue;
+
             var existing = await database.RuntimeSettings.FindAsync([key], cancellationToken);
             if (existing is not null) continue;
             var value = await GetAsync(key, cancellationToken);
